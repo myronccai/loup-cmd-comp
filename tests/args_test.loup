@@ -1,64 +1,66 @@
 @mode(host.dual)
 
 from debug.assert import (expect, expectEq);
-from cli.args import (parse_args, DEFAULT_GREETING);
+from cli.args import (parse_args, comp_switches, SHOW_HEX, SHOW_DECIMAL, SHOW_ASCII);
 
-func test_no_arguments(): void {
-    let none: list[string] = [];
-    let opts = parse_args(none).unwrap();
-    expectEq(opts.command, "", "no command");
-    expectEq(opts.operands.len(), 0, "no operands");
-    expectEq(opts.greeting, DEFAULT_GREETING, "default greeting");
-    expect(!opts.help and !opts.version and !opts.verbose and !opts.shout, "no flags set");
+func test_two_files(): void {
+    let opts = parse_args(["a.txt", "b.txt"]).unwrap();
+    expectEq(opts.operands.len(), 2, "two operands");
+    expectEq(opts.show, SHOW_HEX, "hexadecimal by default");
+    expectEq(opts.max_lines, -1, "whole files");
+    expect(!opts.by_line and !opts.ignore_case, "no /L or /C");
 }
 
-func test_command_and_operands(): void {
-    let opts = parse_args(["hello", "Ann"]).unwrap();
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands.len(), 1, "one operand");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_declared_switches(): void {
+    expectEq(comp_switches().len(), 8, "D A L N C OFFLINE OFF M");
 }
 
-func test_flags_anywhere(): void {
-    let opts = parse_args(["-v", "hello", "--shout", "Ann"]).unwrap();
-    expect(opts.verbose, "verbose");
-    expect(opts.shout, "shout");
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_switches_any_case_and_prefix(): void {
+    let opts = parse_args(["/l", "-C", "a", "/M", "b", "/off", "/OFFLINE"]).unwrap();
+    expect(opts.by_line, "/l");
+    expect(opts.ignore_case, "-C");
+    expectEq(opts.operands.join(","), "a,b", "operands");
+}
+
+func test_display_mode_last_wins(): void {
+    expectEq(parse_args(["a", "b", "/D"]).unwrap().show, SHOW_DECIMAL, "/D");
+    expectEq(parse_args(["a", "b", "/a"]).unwrap().show, SHOW_ASCII, "/a");
+    expectEq(parse_args(["a", "b", "/A", "/D"]).unwrap().show, SHOW_DECIMAL, "/A /D");
+    expectEq(parse_args(["a", "b", "/D", "/A"]).unwrap().show, SHOW_ASCII, "/D /A");
+}
+
+func test_line_count(): void {
+    expectEq(parse_args(["a", "b", "/N=10"]).unwrap().max_lines, 10, "/N=10");
+    expectEq(parse_args(["a", "b", "/n:3"]).unwrap().max_lines, 3, "/n:3");
+}
+
+func test_bad_line_count(): void {
+    expect(parse_args(["a", "b", "/N"]).unwrap_err() == "Invalid switch - /N", "/N alone");
+    expect(parse_args(["a", "b", "/N=x"]).unwrap_err() == "Invalid switch - /N=x", "/N=x");
+    expect(parse_args(["a", "b", "/N=0"]).unwrap_err() == "Invalid switch - /N=0", "/N=0");
+    expect(parse_args(["a", "b", "/N=-2"]).is_err(), "/N=-2");
+}
+
+func test_extra_argument(): void {
+    expect(parse_args(["a", "b", "/x"]).unwrap_err() == "Invalid switch - /x", "undeclared switch");
+    expect(parse_args(["a", "b", "c"]).unwrap_err() == "Invalid switch - c", "third file");
+}
+
+func test_unknown_slash_is_a_file(): void {
+    let opts = parse_args(["/tmp/a.txt", "/tmp/b.txt"]).unwrap();
+    expectEq(opts.operands[0], "/tmp/a.txt", "path");
 }
 
 func test_help_and_version(): void {
+    expect(parse_args(["/?"]).unwrap().help, "/?");
+    expect(parse_args(["a", "b", "c", "-?"]).unwrap().help, "-? wins over errors");
     expect(parse_args(["--help"]).unwrap().help, "--help");
-    expect(parse_args(["-h"]).unwrap().help, "-h");
     expect(parse_args(["--version"]).unwrap().version, "--version");
-    expect(parse_args(["-V"]).unwrap().version, "-V");
 }
 
-func test_value_option_forms(): void {
-    expectEq(parse_args(["-g", "Hi"]).unwrap().greeting, "Hi", "-g VALUE");
-    expectEq(parse_args(["--greeting", "Hi"]).unwrap().greeting, "Hi", "--greeting VALUE");
-    expectEq(parse_args(["--greeting=a=b"]).unwrap().greeting, "a=b", "--greeting=VALUE keeps '='");
-}
-
-func test_double_dash_ends_options(): void {
-    let opts = parse_args(["hello", "--", "--shout"]).unwrap();
-    expect(!opts.shout, "--shout after -- is an operand");
-    expectEq(opts.operands[0], "--shout", "operand");
-}
-
-func test_lone_dash_is_operand(): void {
-    let opts = parse_args(["hello", "-"]).unwrap();
-    expectEq(opts.operands[0], "-", "operand");
-}
-
-func test_unknown_option(): void {
-    expectEq(parse_args(["--nope"]).unwrap_err(), "unknown option '--nope'", "error message");
-}
-
-func test_missing_value(): void {
-    expectEq(parse_args(["-g"]).unwrap_err(), "option '-g' requires a value", "error message");
-}
-
-func test_flag_with_value(): void {
-    expectEq(parse_args(["--shout=1"]).unwrap_err(), "option '--shout' does not take a value", "error message");
+func test_double_dash(): void {
+    let opts = parse_args(["--", "/D", "/?"]).unwrap();
+    expect(!opts.help, "/? after -- is a file");
+    expectEq(opts.show, SHOW_HEX, "/D after -- is a file");
+    expectEq(opts.operands.join(","), "/D,/?", "operands");
 }

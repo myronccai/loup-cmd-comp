@@ -1,28 +1,31 @@
 @mode(host.dual)
 
-from appinfo import (APP_NAME, APP_VERSION, APP_SUMMARY);
-from cli.args import (DEFAULT_GREETING);
+from appinfo import (APP_NAME, APP_VERSION);
 
+# The text of `comp /?`: a short summary of the syntax and switches (in
+# this project's own words).
 pub func usage(): string {
     let lines = [
-        i"usage: {$ APP_NAME $} [OPTIONS] COMMAND [ARGS...]",
+        "COMP [data1] [data2] [/D] [/A] [/L] [/N=number] [/C] [/OFF[LINE]] [/M]",
         "",
-        APP_SUMMARY,
+        "Compares two files, or two sets of files, byte by byte.",
         "",
-        "Commands:",
-        "  hello [NAME]          Print a greeting (NAME defaults to 'world')",
-        "  help                  Show this help",
+        "  data1, data2  The files to compare. Wildcards select sets of files; a",
+        "                directory means every file in it (data1) or the files",
+        "                with the same names (data2).",
+        "  /D            Show differing bytes as decimal numbers.",
+        "  /A            Show differing bytes as characters.",
+        "  /L            Report line numbers instead of byte offsets.",
+        "  /N=number     Compare only the first number lines of each file.",
+        "  /C            Ignore the case of ASCII letters.",
+        "  /OFF[LINE]    Accepted; has no effect on Linux.",
+        "  /M            Accepted; this version never asks to compare more files.",
         "",
-        "Options:",
-        i"  -g, --greeting TEXT   Greeting used by 'hello' (default: {$ DEFAULT_GREETING $})",
-        "      --shout           Print the greeting in upper case",
-        "  -v, --verbose         Print diagnostic messages to stderr",
-        "  -h, --help            Show this help and exit",
-        "  -V, --version         Show the version and exit",
+        "ERRORLEVEL: 0 the files match, 1 they differ, 2 a file could not be opened.",
     ];
     return lines.join("\n");
 }
 
 pub func version_line(): string {
-    return i"{$ APP_NAME $} {$ APP_VERSION $}";
+    return i"{$ APP_NAME $} (loup-cmd-{$ APP_NAME $}) {$ APP_VERSION $}";
 }

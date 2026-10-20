@@ -1,0 +1,90 @@
+@mode(host.dual)
+
+# When data1 or data2 is missing, comp asks for it, then asks for more
+# switches until it gets an empty answer:
+#
+#   Name of first file to compare: a.txt
+#   Name of second file to compare: b.txt
+#   Option : /A
+#   Option :
+#
+# Loup 1.26.0 can only read standard input whole, so the answers are the
+# lines of standard input, read once.
+
+pub const PROMPT_FIRST: string = "Name of first file to compare:";
+pub const PROMPT_SECOND: string = "Name of second file to compare:";
+pub const PROMPT_OPTION: string = "Option :";
+
+# The prompts to show and the completed command line.
+pub struct PromptPlan {
+    pub prompts: list[string];  # each prompt, in order; printed one per line
+    pub argv: list[string];     # the command line with the answers added
+    pub complete: bool;         # false when the input ran out before a file name
+}
+
+# The lines of the input, without their CR LF or LF ends. A final line
+# without an end counts; the empty "line" after a final newline does not.
+pub func answer_lines(input: string): list[string] {
+    var out: list[string] = [];
+    if (input.len() == 0) {
+        return out;
+    }
+    let parts = input.split("\n");
+    var n = parts.len();
+    if (input.endsWith("\n")) {
+        n -= 1;
+    }
+    for (i in 0..n) {
+        var line = parts[i];
+        if (line.endsWith("\r")) {
+            line = line.slice(0, line.len() - 1);
+        }
+        out.push(line);
+    }
+    return out;
+}
+
+# The words of one Option answer.
+func words(line: string): list[string] {
+    var out: list[string] = [];
+    for (w in line.replace("\t", " ").split(" ")) {
+        if (w.len() > 0) {
+            out.push(w);
+        }
+    }
+    return out;
+}
+
+# Completes a command line that names `have` (0 or 1) files with answers
+# read from `input`. The file names go after the existing arguments, then
+# the switches typed at the Option prompts.
+pub func complete_args(argv: list[string], have: int, input: string): PromptPlan {
+    let answers = answer_lines(input);
+    var prompts: list[string] = [];
+    var out: list[string] = [];
+    for (a in argv) {
+        out.push(a);
+    }
+    var next = 0;
+    var need = have;
+    while (need < 2) {
+        prompts.push(if (need == 0) { PROMPT_FIRST } else { PROMPT_SECOND });
+        if (next >= answers.len() or answers[next].trim().len() == 0) {
+            return PromptPlan(prompts = prompts, argv = out, complete = false);
+        }
+        out.push(answers[next].trim());
+        next += 1;
+        need += 1;
+    }
+    while (true) {
+        prompts.push(PROMPT_OPTION);
+        if (next >= answers.len() or answers[next].trim().len() == 0) {
+            break;
+        }
+        for (w in words(answers[next])) {
+            out.push(w);
+        }
+        next += 1;
+    }
+    return PromptPlan(prompts = prompts, argv = out, complete = true);
+}

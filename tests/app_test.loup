@@ -1,25 +1,38 @@
 @mode(host.dual)
 
 # Exit statuses of the whole command line. These tests print the program's
-# normal output and error messages.
+# normal output.
 
 from debug.assert import (expectEq);
-from appinfo import (EXIT_OK, EXIT_USAGE);
+from io.fs import (createDir, writeText, removeDir, isDir);
+from appinfo import (EXIT_SAME, EXIT_DIFFERENT, EXIT_ERROR);
 from cli.app import (run);
 
 func test_version_succeeds(): void {
-    expectEq(run(["--version"]), EXIT_OK, "--version");
+    expectEq(run(["--version"]), EXIT_SAME, "--version");
 }
 
-func test_hello_succeeds(): void {
-    expectEq(run(["hello", "tests"]), EXIT_OK, "hello NAME");
+func test_help_succeeds(): void {
+    expectEq(run(["/?"]), EXIT_SAME, "/?");
 }
 
-func test_unknown_command_is_usage_error(): void {
-    expectEq(run(["bogus"]), EXIT_USAGE, "unknown command");
+func test_bad_switch_value(): void {
+    expectEq(run(["a", "b", "/N=x"]), EXIT_ERROR, "/N=x");
 }
 
-func test_missing_command_is_usage_error(): void {
-    let none: list[string] = [];
-    expectEq(run(none), EXIT_USAGE, "no command");
+func test_compare_files(): void {
+    let root = "build/tmp/app_comp";
+    if (isDir(root)) {
+        removeDir(root);
+    }
+    createDir(root);
+    writeText(root + "/a.txt", "same\n");
+    writeText(root + "/b.txt", "same\n");
+    writeText(root + "/c.txt", "diff\n");
+    writeText(root + "/d.txt", "longer\n");
+    expectEq(run([root + "\\a.txt", root + "/b.txt"]), EXIT_SAME, "equal");
+    expectEq(run([root + "/a.txt", root + "/c.txt"]), EXIT_DIFFERENT, "different bytes");
+    expectEq(run([root + "/a.txt", root + "/d.txt"]), EXIT_DIFFERENT, "different sizes");
+    expectEq(run([root + "/a.txt", root + "/missing.txt"]), EXIT_ERROR, "missing");
+    removeDir(root);
 }

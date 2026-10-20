@@ -1,0 +1,321 @@
+@mode(host.dual)
+
+# comp: compares two files, or two sets of files, byte by byte, as the
+# Windows comp command does, and reports up to ten differing bytes:
+#
+#   Comparing a.txt and b.txt...
+#   Compare error at OFFSET 2
+#   file1 = 63
+#   file2 = 78
+#
+# data1 may be a file, a wildcard pattern or a directory (all its files).
+# data2 may be a file, a directory (the same name as each data1 file) or a
+# wildcard pattern (each data1 name mapped through it: `*.bak`).
+
+from appinfo import (EXIT_SAME, EXIT_DIFFERENT, EXIT_ERROR);
+from cli.args import (Options, SHOW_HEX, SHOW_DECIMAL, SHOW_ASCII);
+from io.fs import (isDir, isFile);
+from win.paths import (display_path, fs_path, join_path, split_path, base_name,
+    strip_trailing_separators);
+from win.wildcard import (MATCH_FILES, expand, has_wildcards, list_matches,
+    wildcard_in_directory);
+
+# comp stops a pair after this many differing bytes.
+pub const MAX_MISMATCHES: int = 10;
+
+pub const MSG_COMPARE_OK: string = "Files compare OK";
+pub const MSG_DIFFERENT_SIZES: string = "Files are different sizes.";
+pub const MSG_TOO_MANY: string = "10 Mismatches - ending compare";
+pub const MSG_NO_EXPANSION: string = "Could not expand second file name so as to match first";
+
+pub func msg_cant_open(display: string): string {
+    return "Can't find/open file: " + display;
+}
+
+pub func msg_comparing(first: string, second: string): string {
+    return "Comparing " + first + " and " + second + "...";
+}
+
+# One comparison to make: two files in fs form, or an operand that failed
+# (error is then the message to print).
+pub struct Pair {
+    pub file1: string;
+    pub file2: string;
+    pub error: string;
+}
+
+func file_pair(file1: string, file2: string): Pair {
+    return Pair(file1 = file1, file2 = file2, error = "");
+}
+
+func error_pair(message: string): Pair {
+    return Pair(file1 = "", file2 = "", error = message);
+}
+
+# The result of comparing two files' contents: the lines comp prints after
+# `Comparing ...`, and the exit status for the pair.
+pub struct Outcome {
+    pub lines: list[string];
+    pub status: int;
+}
+
+func outcome(lines: list[string], status: int): Outcome {
+    return Outcome(lines = lines, status = status);
+}
+
+const HEX_DIGITS: string = "0123456789ABCDEF";
+
+# Upper-case hexadecimal without leading zeros: 0 → `0`, 255 → `FF`.
+pub func hex(n: int): string {
+    if (n == 0) {
+        return "0";
+    }
+    var digits: list[string] = [];
+    var v = n;
+    while (v > 0) {
+        digits.push(HEX_DIGITS.slice(v % 16, v % 16 + 1));
+        v = v / 16;
+    }
+    var out: list[string] = [];
+    var i = digits.len() - 1;
+    while (i >= 0) {
+        out.push(digits[i]);
+        i -= 1;
+    }
+    return out.join("");
+}
+
+# A byte as comp shows it: hexadecimal (`61`), decimal (`97`) or the
+# character itself (`a`; bytes from 0x80 up are shown as Latin-1).
+pub func format_byte(b: int, show: int): string {
+    if (show == SHOW_DECIMAL) {
+        return str(b);
+    }
+    if (show == SHOW_ASCII) {
+        return str(char.of(b));
+    }
+    return hex(b);
+}
+
+# A byte for comparison: with /C, ASCII letters ignore case.
+pub func fold_byte(b: int, ignore_case: bool): int {
+    if (ignore_case and b >= 97 and b <= 122) {
+        return b - 32;
+    }
+    return b;
+}
+
+# How many bytes make up the first `lines` lines of the data (each ending
+# with LF, the last one possibly without), or all of it when lines < 0.
+pub func line_prefix(data: bytes, lines: int): int {
+    if (lines < 0) {
+        return data.len();
+    }
+    var seen = 0;
+    for (i in 0..data.len()) {
+        if (data[i] == 10) {
+            seen += 1;
+            if (seen == lines) {
+                return i + 1;
+            }
+        }
+    }
+    return data.len();
+}
+
+# Compares two files' contents under the options. Without /N, files of
+# different sizes are not compared. With /N=n, the first n lines of each
+# are compared over their common length, and a length difference is
+# reported after any differing bytes.
+pub func compare_data(d1: bytes, d2: bytes, opts: Options): Outcome {
+    var lines: list[string] = [];
+    if (opts.max_lines < 0 and d1.len() != d2.len()) {
+        lines.push(MSG_DIFFERENT_SIZES);
+        return outcome(lines, EXIT_DIFFERENT);
+    }
+    let n1 = line_prefix(d1, opts.max_lines);
+    let n2 = line_prefix(d2, opts.max_lines);
+    let n = if (n1 < n2) { n1 } else { n2 };
+    var mismatches = 0;
+    var line = 1;
+    var i = 0;
+    while (i < n) {
+        let a = d1[i];
+        let b = d2[i];
+        if (fold_byte(a, opts.ignore_case) != fold_byte(b, opts.ignore_case)) {
+            mismatches += 1;
+            if (opts.by_line) {
+                lines.push("Compare error at LINE " + str(line));
+            } else {
+                lines.push("Compare error at OFFSET " + hex(i));
+            }
+            lines.push("file1 = " + format_byte(a, opts.show));
+            lines.push("file2 = " + format_byte(b, opts.show));
+            if (mismatches == MAX_MISMATCHES) {
+                lines.push(MSG_TOO_MANY);
+                break;
+            }
+        }
+        if (a == 10) {
+            line += 1;
+        }
+        i += 1;
+    }
+    if (n1 != n2 and mismatches < MAX_MISMATCHES) {
+        lines.push(MSG_DIFFERENT_SIZES);
+        return outcome(lines, EXIT_DIFFERENT);
+    }
+    if (mismatches == 0) {
+        lines.push(MSG_COMPARE_OK);
+    }
+    lines.push("");
+    return outcome(lines, if (mismatches == 0 and n1 == n2) { EXIT_SAME } else { EXIT_DIFFERENT });
+}
+
+# Maps one part of a name (base or extension) through the same part of a
+# data2 pattern: `*` copies the rest, `?` copies one character, anything
+# else is itself.
+func map_part(pattern: string, source: string): string {
+    var out: list[string] = [];
+    var src: list[string] = [];
+    for (ch in source) {
+        src.push(ch);
+    }
+    var k = 0;
+    for (ch in pattern) {
+        if (ch == "*") {
+            while (k < src.len()) {
+                out.push(src[k]);
+                k += 1;
+            }
+            return out.join("");
+        }
+        if (ch == "?") {
+            if (k < src.len()) {
+                out.push(src[k]);
+            }
+        } else {
+            out.push(ch);
+        }
+        k += 1;
+    }
+    return out.join("");
+}
+
+# Splits a name at its last `.`: `a.b.txt` → [`a.b`, `txt`, `.`]; a name
+# without one → [name, ``, ``].
+func split_ext(name: string): list[string] {
+    var dot = -1;
+    var i = 0;
+    for (ch in name) {
+        if (ch == ".") {
+            dot = i;
+        }
+        i += 1;
+    }
+    if (dot < 0) {
+        return [name, "", ""];
+    }
+    return [name.slice(0, dot), name.slice(dot + 1), "."];
+}
+
+# The data2 name for a data1 name under a wildcard pattern, the DOS way:
+# base and extension are mapped separately (`*.bak` + `a.txt` → `a.bak`,
+# `b?.*` + `a1.log` → `b1.log`, `*` + `a.txt` → `a.txt`).
+pub func map_name(pattern: string, name: string): string {
+    let p = split_ext(pattern);
+    if (p[2].len() == 0) {
+        return map_part(pattern, name);
+    }
+    let s = split_ext(name);
+    let base = map_part(p[0], s[0]);
+    let ext = map_part(p[1], s[1]);
+    if (ext.len() == 0) {
+        return base;
+    }
+    return base + "." + ext;
+}
+
+# The second file for one data1 file.
+pub func second_file(operand2: string, file1: string): string {
+    let parts = split_path(operand2);
+    if (has_wildcards(parts.name)) {
+        return join_path(parts.dir, map_name(parts.name, base_name(file1)));
+    }
+    let p2 = fs_path(operand2);
+    if (isDir(p2) or p2.endsWith("/")) {
+        return join_path(strip_trailing_separators(p2), base_name(file1));
+    }
+    return p2;
+}
+
+# The data1 files: a wildcard's matching files, every file in a directory,
+# or the file itself. An empty list means nothing could be found.
+pub func first_files(operand1: string): list[string] {
+    let p1 = fs_path(operand1);
+    var out: list[string] = [];
+    if (wildcard_in_directory(operand1)) {
+        return out;
+    }
+    if (has_wildcards(operand1)) {
+        return expand(operand1, MATCH_FILES);
+    }
+    if (isDir(p1)) {
+        for (name in list_matches(p1, "*", MATCH_FILES)) {
+            out.push(join_path(p1, name));
+        }
+        return out;
+    }
+    out.push(p1);
+    return out;
+}
+
+# The pairs to compare for data1 and data2, in order.
+pub func plan(operand1: string, operand2: string): list[Pair] {
+    var pairs: list[Pair] = [];
+    let files = first_files(operand1);
+    if (files.len() == 0) {
+        var shown = operand1;
+        if (!has_wildcards(operand1) and isDir(fs_path(operand1))) {
+            shown = join_path(strip_trailing_separators(fs_path(operand1)), "*.*");
+        }
+        pairs.push(error_pair(msg_cant_open(display_path(shown))));
+        return pairs;
+    }
+    if (wildcard_in_directory(operand2)) {
+        pairs.push(error_pair(MSG_NO_EXPANSION));
+        return pairs;
+    }
+    for (f1 in files) {
+        pairs.push(file_pair(f1, second_file(operand2, f1)));
+    }
+    return pairs;
+}
+
+pub func run_comp(opts: Options): int {
+    var status = EXIT_SAME;
+    for (pair in plan(opts.operands[0], opts.operands[1])) {
+        var result = EXIT_SAME;
+        if (pair.error.len() > 0) {
+            printErr(pair.error);
+            result = EXIT_ERROR;
+        } else if (!isFile(pair.file1)) {
+            printErr(msg_cant_open(display_path(pair.file1)));
+            result = EXIT_ERROR;
+        } else if (!isFile(pair.file2)) {
+            printErr(msg_cant_open(display_path(pair.file2)));
+            result = EXIT_ERROR;
+        } else {
+            println(msg_comparing(display_path(pair.file1), display_path(pair.file2)));
+            let done = compare_data(readBytes(pair.file1), readBytes(pair.file2), opts);
+            for (line in done.lines) {
+                println(line);
+            }
+            result = done.status;
+        }
+        if (result > status) {
+            status = result;
+        }
+    }
+    return status;
+}

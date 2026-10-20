@@ -1,0 +1,42 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from cli.prompt import (answer_lines, complete_args, PROMPT_FIRST, PROMPT_SECOND, PROMPT_OPTION);
+
+func test_answer_lines(): void {
+    expectEq(answer_lines("").len(), 0, "empty input");
+    expectEq(answer_lines("a\r\nb\n").join("|"), "a|b", "CR LF and LF");
+    expectEq(answer_lines("a\n\nb").join("|"), "a||b", "empty line and no final newline");
+}
+
+func test_both_names(): void {
+    let none: list[string] = [];
+    let plan = complete_args(none, 0, "one.txt\ntwo.txt\n\n");
+    expect(plan.complete, "complete");
+    expectEq(plan.argv.join(","), "one.txt,two.txt", "names");
+    expectEq(plan.prompts.len(), 3, "first, second, option");
+    expect(plan.prompts[0] == PROMPT_FIRST and plan.prompts[1] == PROMPT_SECOND, "name prompts");
+    expect(plan.prompts[2] == PROMPT_OPTION, "option prompt");
+}
+
+func test_second_name_and_options(): void {
+    let plan = complete_args(["/D", "a.txt"], 1, "b.txt\n/A  /L\n/C\n\nignored\n");
+    expect(plan.complete, "complete");
+    expectEq(plan.argv.join(","), "/D,a.txt,b.txt,/A,/L,/C", "switches after names");
+    expectEq(plan.prompts.len(), 4, "second, three options");
+}
+
+func test_input_runs_out(): void {
+    let none: list[string] = [];
+    let plan = complete_args(none, 0, "only.txt\n");
+    expect(!plan.complete, "no second name");
+    expectEq(plan.prompts.len(), 2, "both name prompts shown");
+    expect(!complete_args(none, 0, "").complete, "no input");
+    expect(!complete_args(none, 0, "\n").complete, "empty name");
+}
+
+func test_options_end_at_eof(): void {
+    let plan = complete_args(["a", "b"], 2, "");
+    expect(plan.complete, "nothing needed");
+    expectEq(plan.prompts.len(), 1, "one option prompt");
+}

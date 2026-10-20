@@ -1,0 +1,178 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from io.fs import (createDir, writeText, removeDir, isDir);
+from appinfo import (EXIT_SAME, EXIT_DIFFERENT);
+from cli.args import (Options, parse_args, SHOW_HEX, SHOW_DECIMAL, SHOW_ASCII);
+from commands.comp import (hex, format_byte, fold_byte, line_prefix, compare_data, map_name,
+    second_file, first_files, plan, msg_cant_open, msg_comparing, MSG_COMPARE_OK,
+    MSG_DIFFERENT_SIZES, MSG_TOO_MANY);
+
+# String equality through expect: expectEq on strings fails in native test
+# lanes even when they are equal.
+func same(got: string, want: string, what: string): void {
+    expect(got == want, what + ": got '" + got + "', want '" + want + "'");
+}
+
+func opts_for(args: list[string]): Options {
+    var argv = ["x", "y"];
+    for (a in args) {
+        argv.push(a);
+    }
+    return parse_args(argv).unwrap();
+}
+
+func test_hex(): void {
+    same(hex(0), "0", "zero");
+    same(hex(10), "A", "ten");
+    same(hex(255), "FF", "255");
+    same(hex(4096), "1000", "4096");
+}
+
+func test_format_byte(): void {
+    same(format_byte(97, SHOW_HEX), "61", "hex");
+    same(format_byte(10, SHOW_HEX), "A", "hex without padding");
+    same(format_byte(97, SHOW_DECIMAL), "97", "decimal");
+    same(format_byte(97, SHOW_ASCII), "a", "character");
+}
+
+func test_fold_byte(): void {
+    expectEq(fold_byte(97, true), 65, "a folds to A");
+    expectEq(fold_byte(97, false), 97, "no folding without /C");
+    expectEq(fold_byte(65, true), 65, "A stays");
+    expectEq(fold_byte(123, true), 123, "{ is not a letter");
+}
+
+func test_line_prefix(): void {
+    let data = b"one\ntwo\nthree";
+    expectEq(line_prefix(data, -1), 13, "whole file");
+    expectEq(line_prefix(data, 1), 4, "one line");
+    expectEq(line_prefix(data, 2), 8, "two lines");
+    expectEq(line_prefix(data, 3), 13, "last line has no end");
+    expectEq(line_prefix(data, 9), 13, "more lines than the file has");
+}
+
+func test_equal_files(): void {
+    let r = compare_data(b"abc\n", b"abc\n", opts_for([]));
+    expectEq(r.status, EXIT_SAME, "status");
+    same(r.lines.join("|"), MSG_COMPARE_OK + "|", "OK and a blank line");
+    expectEq(compare_data(b"", b"", opts_for([])).status, EXIT_SAME, "two empty files");
+}
+
+func test_mismatches(): void {
+    let r = compare_data(b"abcdef", b"abXdeY", opts_for([]));
+    expectEq(r.status, EXIT_DIFFERENT, "status");
+    same(r.lines.join("|"),
+        "Compare error at OFFSET 2|file1 = 63|file2 = 58|Compare error at OFFSET 5|file1 = 66|file2 = 59|",
+        "two mismatches");
+}
+
+func test_display_modes(): void {
+    same(compare_data(b"a", b"b", opts_for(["/D"])).lines.join("|"),
+        "Compare error at OFFSET 0|file1 = 97|file2 = 98|", "decimal");
+    same(compare_data(b"a", b"b", opts_for(["/A"])).lines.join("|"),
+        "Compare error at OFFSET 0|file1 = a|file2 = b|", "characters");
+}
+
+func test_line_numbers(): void {
+    let r = compare_data(b"one\ntwo\nsix\n", b"one\ntwX\nsiX\n", opts_for(["/L"]));
+    same(r.lines.join("|"),
+        "Compare error at LINE 2|file1 = 6F|file2 = 58|Compare error at LINE 3|file1 = 78|file2 = 58|",
+        "line numbers of file1");
+}
+
+func test_offsets_are_hex(): void {
+    let r = compare_data(b"0123456789abcdefgh", b"0123456789abcdefgX", opts_for([]));
+    same(r.lines[0], "Compare error at OFFSET 11", "offset 17");
+}
+
+func test_ignore_case(): void {
+    expectEq(compare_data(b"Hello", b"hELLO", opts_for(["/C"])).status, EXIT_SAME, "/C");
+    expectEq(compare_data(b"Hello", b"hELLO", opts_for([])).status, EXIT_DIFFERENT, "case counts");
+    expectEq(compare_data(b"[", b"{", opts_for(["/C"])).status, EXIT_DIFFERENT, "only letters fold");
+}
+
+func test_different_sizes(): void {
+    let r = compare_data(b"abc", b"abcd", opts_for([]));
+    expectEq(r.status, EXIT_DIFFERENT, "status");
+    same(r.lines.join("|"), MSG_DIFFERENT_SIZES, "no comparison, no blank line");
+}
+
+func test_ten_mismatches(): void {
+    let r = compare_data(b"0123456789AB", b"abcdefghijkl", opts_for([]));
+    expectEq(r.lines.len(), 32, "ten blocks, the message and a blank line");
+    same(r.lines[27], "Compare error at OFFSET 9", "tenth");
+    same(r.lines[30], MSG_TOO_MANY, "stops");
+}
+
+func test_first_lines_only(): void {
+    let a = b"one\ntwo\nthree\n";
+    let b = b"one\ntwo\nfour and more\n";
+    expectEq(compare_data(a, b, opts_for(["/N=2"])).status, EXIT_SAME, "first two lines equal");
+    let r = compare_data(a, b, opts_for(["/N=3"]));
+    expectEq(r.status, EXIT_DIFFERENT, "third line differs");
+    same(r.lines[r.lines.len() - 1], MSG_DIFFERENT_SIZES, "lengths differ");
+    expectEq(compare_data(b"one\n", b"one\ntwo\n", opts_for(["/N=1"])).status, EXIT_SAME,
+        "different sizes are fine with /N");
+}
+
+func test_map_name(): void {
+    same(map_name("*.bak", "a.txt"), "a.bak", "*.bak");
+    same(map_name("*", "a.txt"), "a.txt", "*");
+    same(map_name("*.*", "a.txt"), "a.txt", "*.*");
+    same(map_name("*.*", "README"), "README", "*.* without extension");
+    same(map_name("b?.*", "a1.log"), "b1.log", "?");
+    same(map_name("new.*", "old.c"), "new.c", "fixed base");
+}
+
+func test_messages(): void {
+    same(msg_cant_open("x.txt"), "Can't find/open file: x.txt", "can't open");
+    same(msg_comparing("a", "b"), "Comparing a and b...", "comparing");
+}
+
+func fixture(): string {
+    let root = "build/tmp/comp_sets";
+    if (isDir(root)) {
+        removeDir(root);
+    }
+    createDir(root);
+    createDir(root + "/bak");
+    createDir(root + "/empty");
+    writeText(root + "/a.txt", "a\n");
+    writeText(root + "/b.txt", "b\n");
+    writeText(root + "/c.log", "c\n");
+    writeText(root + "/bak/a.txt", "a\n");
+    return root;
+}
+
+func test_first_files(): void {
+    let root = fixture();
+    same(first_files(root + "\\*.txt").join(","), root + "/a.txt," + root + "/b.txt", "wildcard");
+    same(first_files(root + "/bak").join(","), root + "/bak/a.txt", "directory");
+    same(first_files(root + "/none.txt").join(","), root + "/none.txt", "file, unchecked");
+    expectEq(first_files(root + "/*.zip").len(), 0, "no match");
+    expectEq(first_files(root + "/em*/x").len(), 0, "wildcard in a directory");
+    removeDir(root);
+}
+
+func test_second_file(): void {
+    let root = fixture();
+    same(second_file(root + "/bak", "x/a.txt"), root + "/bak/a.txt", "directory");
+    same(second_file(root + "\\bak\\", "a.txt"), root + "/bak/a.txt", "directory with separator");
+    same(second_file(root + "/bak/*.old", "x/a.txt"), root + "/bak/a.old", "pattern");
+    same(second_file(root + "/b.txt", "x/a.txt"), root + "/b.txt", "file");
+    removeDir(root);
+}
+
+func test_plan(): void {
+    let root = fixture();
+    let pairs = plan(root + "/*.txt", root + "/bak");
+    expectEq(pairs.len(), 2, "two pairs");
+    same(pairs[1].file1, root + "/b.txt", "first file");
+    same(pairs[1].file2, root + "/bak/b.txt", "second file (checked later)");
+    let none = plan(root + "/*.zip", root + "/bak");
+    same(none[0].error, "Can't find/open file: " + root.replace("/", "\\") + "\\*.zip", "no match");
+    let empty = plan(root + "/empty", root + "/bak");
+    same(empty[0].error, "Can't find/open file: " + root.replace("/", "\\") + "\\empty\\*.*", "empty directory");
+    removeDir(root);
+}

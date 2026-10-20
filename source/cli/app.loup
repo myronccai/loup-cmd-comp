@@ -1,54 +1,52 @@
 @mode(host.dual)
 
-from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE, EXIT_USAGE);
+from appinfo import (EXIT_SAME, EXIT_ERROR);
 from cli.args import (Options, parse_args);
+from cli.prompt import (complete_args);
 from cli.usage import (usage, version_line);
-from commands.hello import (run_hello);
+from commands.comp import (run_comp);
 
-# Parses argv, runs the selected command and returns the exit status.
+# Parses argv, runs comp and returns the exit status (comp's ERRORLEVEL).
 pub func run(argv: list[string]): int {
-    let opts = match parse_args(argv) {
+    var opts = match parse_args(argv) {
         Ok(parsed) => parsed,
         Err(msg) => {
-            return usage_error(msg);
+            printErr(msg);
+            return EXIT_ERROR;
         },
     };
 
     if (opts.help) {
         println(usage());
-        return EXIT_OK;
+        return EXIT_SAME;
     }
     if (opts.version) {
         println(version_line());
-        return EXIT_OK;
+        return EXIT_SAME;
     }
-    if (opts.verbose) {
-        printErr(i"{$ APP_NAME $}: command '{$ opts.command $}', operands {$ opts.operands $}");
+
+    if (opts.operands.len() < 2) {
+        # Ask for the missing names (and more switches) on standard input.
+        let plan = complete_args(argv, opts.operands.len(), readText("/dev/stdin"));
+        for (p in plan.prompts) {
+            println(p);
+        }
+        if (!plan.complete) {
+            return EXIT_ERROR;
+        }
+        opts = match parse_args(plan.argv) {
+            Ok(parsed) => parsed,
+            Err(msg) => {
+                printErr(msg);
+                return EXIT_ERROR;
+            },
+        };
     }
 
     try {
-        return dispatch(opts);
+        return run_comp(opts);
     } catch (Exception as e) {
-        printErr(i"{$ APP_NAME $}: error: {$ e.message $}");
-        return EXIT_FAILURE;
+        printErr(e.message);
+        return EXIT_ERROR;
     }
-}
-
-# Add new commands here and to the help text in cli/usage.loup.
-func dispatch(opts: Options): int {
-    return match opts.command {
-        "hello" => run_hello(opts),
-        "help" => {
-            println(usage());
-            EXIT_OK
-        },
-        "" => usage_error("no command given"),
-        other => usage_error(i"unknown command '{$ other $}'"),
-    };
-}
-
-func usage_error(msg: string): int {
-    printErr(i"{$ APP_NAME $}: {$ msg $}");
-    printErr(i"Try '{$ APP_NAME $} --help' for more information.");
-    return EXIT_USAGE;
 }
