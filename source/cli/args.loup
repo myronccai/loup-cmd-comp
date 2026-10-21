@@ -7,6 +7,9 @@
 #
 # Switches are case-insensitive and start with `/` or `-`; a `/X` that comp
 # does not declare is a file name. `--` ends switch parsing.
+#
+# Runtime: host.dual. Compiled into the native binary build/comp by `make
+# build`; `loup run source/main.loup` interprets the same code.
 
 from win.switches import (SwitchArgs, SwitchSpec, flag, optional_value, parse_switches,
     has_switch, last_switch, parse_int_value, switch_error_message);

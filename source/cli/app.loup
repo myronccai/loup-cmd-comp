@@ -1,5 +1,13 @@
 @mode(host.dual)
 
+# Top level of comp: parse the arguments, handle /? and --version, ask on
+# standard input for any missing file name, run the comparison and turn
+# the outcome into comp's ERRORLEVEL.
+#
+# Runtime: host.dual. Compiled into the native binary build/comp by `make
+# build`; `loup run source/main.loup` interprets the same code, and the unit
+# tests call run() directly.
+
 from appinfo import (EXIT_SAME, EXIT_ERROR);
 from cli.args import (Options, parse_args);
 from cli.prompt import (complete_args);

@@ -11,6 +11,16 @@
 # data1 may be a file, a wildcard pattern or a directory (all its files).
 # data2 may be a file, a directory (the same name as each data1 file) or a
 # wildcard pattern (each data1 name mapped through it: `*.bak`).
+#
+# Runtime: host.dual. Compiled into the native binary build/comp by `make
+# build`; `loup run source/main.loup` interprets the same code. Everything
+# but run_comp returns values (lines to print, pairs, statuses), so the unit
+# tests need no stdout capture.
+#
+# Structure: messages; the Pair and Outcome records; byte formatting and
+# the content comparison (compare_data); mapping a data1 name through a
+# data2 wildcard (map_name); planning the pairs from the two operands
+# (plan); and run_comp, which reads, compares and prints each pair.
 
 from appinfo import (EXIT_SAME, EXIT_DIFFERENT, EXIT_ERROR);
 from cli.args import (Options, SHOW_HEX, SHOW_DECIMAL, SHOW_ASCII);
@@ -62,6 +72,9 @@ pub struct Outcome {
 func outcome(lines: list[string], status: int): Outcome {
     return Outcome(lines = lines, status = status);
 }
+
+# Byte formatting and the comparison itself. Offsets are always shown in
+# hexadecimal; differing bytes too, unless /D or /A asks otherwise.
 
 const HEX_DIGITS: string = "0123456789ABCDEF";
 
@@ -172,6 +185,10 @@ pub func compare_data(d1: bytes, d2: bytes, opts: Options): Outcome {
     return outcome(lines, if (mismatches == 0 and n1 == n2) { EXIT_SAME } else { EXIT_DIFFERENT });
 }
 
+# Name mapping for a wildcard data2. comp pairs each data1 file with the
+# name the data2 pattern gives it, mapping base name and extension
+# separately as DOS did, so `comp *.txt *.bak` pairs a.txt with a.bak.
+
 # Maps one part of a name (base or extension) through the same part of a
 # data2 pattern: `*` copies the rest, `?` copies one character, anything
 # else is itself.
@@ -235,6 +252,10 @@ pub func map_name(pattern: string, name: string): string {
     }
     return base + "." + ext;
 }
+
+# Planning: expand data1 into files, then find each one's partner. A data1
+# that matches nothing becomes a single error pair, so run_comp reports it
+# in order with the rest.
 
 # The second file for one data1 file.
 pub func second_file(operand2: string, file1: string): string {

@@ -1,7 +1,7 @@
 @mode(host.dual)
 
-# When data1 or data2 is missing, comp asks for it, then asks for more
-# switches until it gets an empty answer:
+# comp's prompts: when data1 or data2 is missing, comp asks for it, then
+# asks for more switches until it gets an empty answer:
 #
 #   Name of first file to compare: a.txt
 #   Name of second file to compare: b.txt
@@ -10,6 +10,11 @@
 #
 # Loup 1.26.0 can only read standard input whole, so the answers are the
 # lines of standard input, read once.
+#
+# Runtime: host.dual. Compiled into the native binary build/comp by `make
+# build`; `loup run source/main.loup` interprets the same code. Pure
+# functions: cli.app reads standard input and prints the prompts, so the
+# unit tests pass the input as a string.
 
 pub const PROMPT_FIRST: string = "Name of first file to compare:";
 pub const PROMPT_SECOND: string = "Name of second file to compare:";
