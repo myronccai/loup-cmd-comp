@@ -13,7 +13,7 @@ from debug.assert import (expect, expectEq);
 from io.fs import (createDir, writeText, removeDir, isDir);
 from appinfo import (EXIT_SAME, EXIT_DIFFERENT);
 from cli.args import (Options, parse_args, SHOW_HEX, SHOW_DECIMAL, SHOW_ASCII);
-from commands.comp import (hex, format_byte, fold_byte, line_prefix, compare_data, map_name,
+from commands.comp import (hex, format_byte, fold_byte, line_prefix, compare_data, map_name, split_ext,
     second_file, first_files, plan, msg_cant_open, msg_comparing, MSG_COMPARE_OK,
     MSG_DIFFERENT_SIZES, MSG_TOO_MANY);
 
@@ -36,6 +36,35 @@ func test_hex(): void {
     same(hex(10), "A", "ten");
     same(hex(255), "FF", "255");
     same(hex(4096), "1000", "4096");
+}
+
+# The library's bytes.toHex() as an oracle for comp's own hexadecimal,
+# which is upper case without a leading zero.
+func library_hex(b: int): string {
+    let h = bytesFromInts([b]).toHex().toUpperCase();
+    return if (h.startsWith("0")) { h.slice(1) } else { h };
+}
+
+func test_hex_matches_library(): void {
+    for (b in 0..256) {
+        same(hex(b), library_hex(b), "byte " + str(b));
+    }
+}
+
+func test_reported_bytes_match_library(): void {
+    # Every byte differs: the ten reported pairs must be the library's hex
+    # of the bytes at offsets 0..9.
+    var a: list[int] = [];
+    var b: list[int] = [];
+    for (k in 0..12) {
+        a.push(k * 23 % 256);
+        b.push((k * 23 + 128) % 256);
+    }
+    let r = compare_data(bytesFromInts(a), bytesFromInts(b), opts_for([]));
+    for (k in 0..10) {
+        same(r.lines[3 * k + 1], "file1 = " + library_hex(a[k]), "file1 at " + str(k));
+        same(r.lines[3 * k + 2], "file2 = " + library_hex(b[k]), "file2 at " + str(k));
+    }
 }
 
 func test_format_byte(): void {
@@ -123,6 +152,17 @@ func test_first_lines_only(): void {
     same(r.lines[r.lines.len() - 1], MSG_DIFFERENT_SIZES, "lengths differ");
     expectEq(compare_data(b"one\n", b"one\ntwo\n", opts_for(["/N=1"])).status, EXIT_SAME,
         "different sizes are fine with /N");
+}
+
+func test_split_ext(): void {
+    let (base, ext, dot) = split_ext("a.b.txt");
+    same(base + "|" + ext, "a.b|txt", "the last dot splits");
+    expect(dot, "has a dot");
+    let (name, none, no_dot) = split_ext("README");
+    same(name + "|" + none, "README|", "no extension");
+    expect(!no_dot, "no dot");
+    let (_, empty, trailing) = split_ext("x.");
+    expect(empty.len() == 0 and trailing, "a final dot");
 }
 
 func test_map_name(): void {

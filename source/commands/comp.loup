@@ -219,9 +219,9 @@ func map_part(pattern: string, source: string): string {
     return out.join("");
 }
 
-# Splits a name at its last `.`: `a.b.txt` → [`a.b`, `txt`, `.`]; a name
-# without one → [name, ``, ``].
-func split_ext(name: string): list[string] {
+# Splits a name at its last `.` into (base, extension, has a dot):
+# `a.b.txt` → (`a.b`, `txt`, true); `README` → (`README`, ``, false).
+pub func split_ext(name: string): (string, string, bool) {
     var dot = -1;
     var i = 0;
     for (ch in name) {
@@ -231,22 +231,22 @@ func split_ext(name: string): list[string] {
         i += 1;
     }
     if (dot < 0) {
-        return [name, "", ""];
+        return (name, "", false);
     }
-    return [name.slice(0, dot), name.slice(dot + 1), "."];
+    return (name.slice(0, dot), name.slice(dot + 1), true);
 }
 
 # The data2 name for a data1 name under a wildcard pattern, the DOS way:
 # base and extension are mapped separately (`*.bak` + `a.txt` → `a.bak`,
 # `b?.*` + `a1.log` → `b1.log`, `*` + `a.txt` → `a.txt`).
 pub func map_name(pattern: string, name: string): string {
-    let p = split_ext(pattern);
-    if (p[2].len() == 0) {
+    let (pattern_base, pattern_ext, pattern_dot) = split_ext(pattern);
+    if (!pattern_dot) {
         return map_part(pattern, name);
     }
-    let s = split_ext(name);
-    let base = map_part(p[0], s[0]);
-    let ext = map_part(p[1], s[1]);
+    let (name_base, name_ext, _) = split_ext(name);
+    let base = map_part(pattern_base, name_base);
+    let ext = map_part(pattern_ext, name_ext);
     if (ext.len() == 0) {
         return base;
     }
